@@ -57,10 +57,15 @@ public sealed record MemberView(Guid Id, string Name, bool HasVoted, string? Vot
 
 public sealed class RoomState
 {
+    // Aligned with Blazor's default DisconnectedCircuitRetentionPeriod (3 min): past this
+    // window a dropped circuit is gone and reconnects with a fresh memberId anyway.
+    private const int ReconnectGraceSeconds = 180;
+
     private readonly object _lock = new();
     private readonly Dictionary<Guid, string> _members = new();
     private readonly Dictionary<Guid, string> _votes = new();
     private readonly HashSet<Guid> _afk = new();
+    private readonly Dictionary<Guid, DateTime> _recentlyLeft = new();
     private readonly int _countdownSeconds;
     private readonly double _revealThreshold;
     private readonly TimeSpan? _maxVoteDuration;
@@ -93,7 +98,11 @@ public sealed class RoomState
     {
         lock (_lock)
         {
-            if (!_members.ContainsKey(memberId) && _members.Count >= _maxMembers)
+            PruneRecentlyLeftLocked();
+            // A returning member (recently dropped, within the grace window) reclaims a slot
+            // even when full — transient reconnects must never lock a legitimate member out.
+            bool isReturning = _recentlyLeft.Remove(memberId);
+            if (!isReturning && !_members.ContainsKey(memberId) && _members.Count >= _maxMembers)
                 return false;
             _members[memberId] = name;
         }
@@ -106,7 +115,10 @@ public sealed class RoomState
     {
         lock (_lock)
         {
-            _members.Remove(memberId);
+            if (_members.Remove(memberId))
+            {
+                _recentlyLeft[memberId] = DateTime.UtcNow;
+            }
             _votes.Remove(memberId);
             _afk.Remove(memberId);
             if (_votes.Count == 0)
@@ -329,6 +341,16 @@ public sealed class RoomState
         _voteDeadlineCts.Dispose();
         _voteDeadlineCts = null;
         VoteDeadlineUtc = null;
+    }
+
+    private void PruneRecentlyLeftLocked()
+    {
+        if (_recentlyLeft.Count == 0) return;
+        var cutoff = DateTime.UtcNow.AddSeconds(-ReconnectGraceSeconds);
+        foreach (var key in _recentlyLeft.Where(kv => kv.Value < cutoff).Select(kv => kv.Key).ToList())
+        {
+            _recentlyLeft.Remove(key);
+        }
     }
 
     private void RaiseChanged() => Changed?.Invoke();
