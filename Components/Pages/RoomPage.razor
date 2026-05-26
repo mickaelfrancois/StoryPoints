@@ -47,7 +47,7 @@ else if (!joined)
                     Ce salon est complet (@(state?.MaxMembers ?? RoomLimits.CurrentValue.MaxMembersPerRoom) membres maximum).
                 </div>
             }
-            <button type="submit" class="btn btn-primary w-100" disabled="@string.IsNullOrWhiteSpace(memberName)">
+            <button type="submit" class="btn btn-primary w-100" disabled="@(string.IsNullOrWhiteSpace(memberName) || roomFull)">
                 Rejoindre
             </button>
         </EditForm>
@@ -329,6 +329,7 @@ else if (state is not null)
     {
         InvokeAsync(() =>
         {
+            roomFull = false;
             RefreshLocal();
             StateHasChanged();
         });
