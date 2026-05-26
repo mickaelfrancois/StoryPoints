@@ -58,3 +58,22 @@ Ajout de `public int MaxMembersPerRoom { get; set; } = 10;`.
 - Un membre qui quitte le salon (`Leave`) libère son slot immédiatement.
 - Un membre AFK occupe toujours un slot.
 - `CircuitMemberTracker.Track` n'est appelé que si `Join()` retourne `true`.
+
+## Fenêtre de grâce à la reconnexion
+
+Lorsqu'un circuit Blazor tombe brièvement, `CircuitMemberTracker.OnConnectionDownAsync`
+appelle `Leave` (le slot est libéré), puis `OnConnectionUpAsync` rappelle `Join` à la
+reconnexion. Pour éviter qu'un membre légitime soit verrouillé dehors si son slot a été
+repris pendant la coupure :
+
+- `Leave` enregistre le membre dans `_recentlyLeft` (memberId → timestamp), uniquement s'il
+  était réellement présent.
+- `Join` laisse repasser un membre présent dans `_recentlyLeft`, en contournant la limite,
+  puis consomme l'entrée.
+- Le délai de grâce (`ReconnectGraceSeconds = 180`) s'aligne sur le
+  `DisconnectedCircuitRetentionPeriod` par défaut de Blazor : au-delà, le circuit est détruit
+  et revient avec un nouveau `memberId`.
+- Conséquence assumée : le salon peut dépasser temporairement `MaxMembersPerRoom`, borné à
+  `2 × MaxMembersPerRoom` au pire (les membres qui reviennent étaient déjà comptés avant).
+  Ce dépassement ne crée pas de nouveau vecteur de flooding : `_recentlyLeft` ne contient que
+  d'anciens membres ayant déjà franchi la limite.
