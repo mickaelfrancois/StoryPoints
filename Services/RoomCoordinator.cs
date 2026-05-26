@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Options;
 using StoryPoints.Data;
 
 namespace StoryPoints.Services;
@@ -8,14 +9,21 @@ public sealed class RoomCoordinator
     private const int CountdownSeconds = 10;
     private const double RevealThreshold = 2.0 / 3.0;
 
+    private readonly IOptionsMonitor<RoomLimitOptions> _options;
     private readonly ConcurrentDictionary<Guid, RoomState> _rooms = new();
     private readonly ConcurrentDictionary<Guid, DateTime> _pendingActivity = new();
+
+    public RoomCoordinator(IOptionsMonitor<RoomLimitOptions> options)
+    {
+        _options = options;
+    }
 
     public RoomState GetOrCreate(Guid roomId, Scale scale, TimeSpan? maxVoteDuration)
     {
         return _rooms.GetOrAdd(roomId, id =>
         {
-            var state = new RoomState(id, scale, maxVoteDuration, CountdownSeconds, RevealThreshold);
+            var state = new RoomState(id, scale, maxVoteDuration, CountdownSeconds, RevealThreshold,
+                _options.CurrentValue.MaxMembersPerRoom);
             state.Changed += () => _pendingActivity[id] = DateTime.UtcNow;
             _pendingActivity[id] = DateTime.UtcNow;
             return state;
@@ -56,6 +64,7 @@ public sealed class RoomState
     private readonly int _countdownSeconds;
     private readonly double _revealThreshold;
     private readonly TimeSpan? _maxVoteDuration;
+    private readonly int _maxMembers;
 
     private CancellationTokenSource? _countdownCts;
     private CancellationTokenSource? _voteDeadlineCts;
@@ -66,26 +75,31 @@ public sealed class RoomState
     public bool Revealed { get; private set; }
     public DateTime? CountdownDeadlineUtc { get; private set; }
     public DateTime? VoteDeadlineUtc { get; private set; }
+    public int MaxMembers => _maxMembers;
 
     public event Action? Changed;
 
-    public RoomState(Guid id, Scale scale, TimeSpan? maxVoteDuration, int countdownSeconds, double revealThreshold)
+    public RoomState(Guid id, Scale scale, TimeSpan? maxVoteDuration, int countdownSeconds, double revealThreshold, int maxMembers)
     {
         Id = id;
         Scale = scale;
         _maxVoteDuration = maxVoteDuration;
         _countdownSeconds = countdownSeconds;
         _revealThreshold = revealThreshold;
+        _maxMembers = maxMembers;
     }
 
-    public void Join(Guid memberId, string name)
+    public bool Join(Guid memberId, string name)
     {
         lock (_lock)
         {
+            if (!_members.ContainsKey(memberId) && _members.Count >= _maxMembers)
+                return false;
             _members[memberId] = name;
         }
         Evaluate();
         RaiseChanged();
+        return true;
     }
 
     public void Leave(Guid memberId)
