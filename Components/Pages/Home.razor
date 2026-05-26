@@ -1,0 +1,137 @@
+@page "/"
+@using Microsoft.AspNetCore.Components
+@using Microsoft.EntityFrameworkCore
+@using StoryPoints.Data
+@using StoryPoints.Services
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Navigation
+@inject IHttpContextAccessor HttpContextAccessor
+@inject PersistentComponentState PersistentState
+@inject RoomCreationGuard Guard
+@implements IDisposable
+
+<PageTitle>StoryPoints</PageTitle>
+
+<div class="container mt-5" style="max-width: 520px;">
+    <h1 class="mb-4">StoryPoints</h1>
+    <p class="text-muted">Créez un salon, partagez l'URL à l'équipe et chiffrez ensemble.</p>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <h5 class="card-title">Nouveau salon</h5>
+
+            <div class="mb-3">
+                <label class="form-label">Échelle de chiffrage</label>
+                <select class="form-select" @bind="selectedScale">
+                    @foreach (var scale in Enum.GetValues<Scale>())
+                    {
+                        <option value="@scale">@ScaleProvider.Label(scale) — @string.Join(", ", ScaleProvider.Cards(scale))</option>
+                    }
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Délai max pour voter (à partir du premier vote)</label>
+                <select class="form-select" @bind="selectedMaxVoteSeconds">
+                    @foreach (var option in MaxVoteOptions)
+                    {
+                        <option value="@option.Seconds">@option.Label</option>
+                    }
+                </select>
+            </div>
+
+            @if (errorMessage is not null)
+            {
+                <div class="alert alert-danger py-2">@errorMessage</div>
+            }
+
+            <button class="btn btn-primary w-100" @onclick="CreateRoom" disabled="@creating">
+                @(creating ? "Création..." : "Créer le salon")
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private record VoteDurationOption(int? Seconds, string Label);
+
+    private static readonly VoteDurationOption[] MaxVoteOptions = new[]
+    {
+        new VoteDurationOption(20, "20 secondes"),
+        new VoteDurationOption(30, "30 secondes"),
+        new VoteDurationOption(40, "40 secondes"),
+        new VoteDurationOption(60, "60 secondes"),
+        new VoteDurationOption(null, "Illimité")
+    };
+
+    private Scale selectedScale = Scale.Fibonacci;
+    private int? selectedMaxVoteSeconds = 30;
+    private bool creating;
+    private string? errorMessage;
+
+    private string clientKey = "unknown";
+    private PersistingComponentStateSubscription _persistSub;
+
+    protected override void OnInitialized()
+    {
+        if (PersistentState.TryTakeFromJson<string>("clientKey", out var persisted) && !string.IsNullOrWhiteSpace(persisted))
+        {
+            clientKey = persisted!;
+        }
+        else
+        {
+            var ip = HttpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString();
+            if (!string.IsNullOrWhiteSpace(ip)) clientKey = ip!;
+        }
+
+        _persistSub = PersistentState.RegisterOnPersisting(() =>
+        {
+            PersistentState.PersistAsJson("clientKey", clientKey);
+            return Task.CompletedTask;
+        });
+    }
+
+    private async Task CreateRoom()
+    {
+        creating = true;
+        errorMessage = null;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var currentCount = await db.Rooms.CountAsync();
+
+        var check = Guard.CanCreate(clientKey, currentCount);
+        if (check != CreationCheckResult.Allowed)
+        {
+            errorMessage = check switch
+            {
+                CreationCheckResult.GlobalCapReached => "Limite globale de salons atteinte. Réessayez plus tard.",
+                CreationCheckResult.RateLimited => "Trop de salons créés depuis votre poste. Patientez avant de réessayer.",
+                _ => "Création refusée."
+            };
+            creating = false;
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var room = new Room
+        {
+            Id = Guid.NewGuid(),
+            Scale = selectedScale,
+            MaxVoteDurationSeconds = selectedMaxVoteSeconds,
+            CreatedAt = now,
+            LastActivityUtc = now
+        };
+
+        db.Rooms.Add(room);
+        await db.SaveChangesAsync();
+
+        Guard.RegisterCreation(clientKey);
+
+        Navigation.NavigateTo($"/room/{room.Id}");
+    }
+
+    public void Dispose()
+    {
+        _persistSub.Dispose();
+    }
+}

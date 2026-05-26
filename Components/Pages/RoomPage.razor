@@ -1,0 +1,367 @@
+@page "/room/{RoomId:guid}"
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using Microsoft.EntityFrameworkCore
+@using StoryPoints.Data
+@using StoryPoints.Services
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject RoomCoordinator Coordinator
+@inject CircuitMemberTracker Tracker
+@inject ProtectedLocalStorage Storage
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>Salon @RoomId.ToString()[..8]</PageTitle>
+
+@if (room is null)
+{
+    <div class="container mt-5">
+        @if (notFound)
+        {
+            <div class="alert alert-warning">Ce salon n'existe pas. <a href="/">Retour à l'accueil</a></div>
+        }
+        else
+        {
+            <p class="text-muted">Chargement…</p>
+        }
+    </div>
+}
+else if (!joined)
+{
+    <div class="container mt-5" style="max-width: 480px;">
+        <h2>Rejoindre le salon</h2>
+        <p class="text-muted small">
+            Échelle : @ScaleProvider.Label(room.Scale) · Délai max :
+            @(room.MaxVoteDurationSeconds is { } s ? $"{s} s" : "illimité")
+        </p>
+        <EditForm Model="this" OnValidSubmit="JoinAsync">
+            <div class="mb-3">
+                <label class="form-label">Votre nom</label>
+                <InputText class="form-control" @bind-Value="memberName" autofocus />
+            </div>
+            <button type="submit" class="btn btn-primary w-100" disabled="@string.IsNullOrWhiteSpace(memberName)">
+                Rejoindre
+            </button>
+        </EditForm>
+    </div>
+}
+else if (state is not null)
+{
+    <div class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h4 class="mb-0">Tour @state.Round</h4>
+                <small class="text-muted">
+                    Échelle : @ScaleProvider.Label(state.Scale) · Délai max :
+                    @(room.MaxVoteDurationSeconds is { } s ? $"{s} s" : "illimité")
+                </small>
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm @(IsMeAfk ? "btn-warning" : "btn-outline-warning")" @onclick="ToggleAfk">
+                    @(IsMeAfk ? "Je reviens" : "Je suis AFK")
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="CopyShareUrlAsync">
+                    @(copied ? "URL copiée ✓" : "Copier l'URL du salon")
+                </button>
+            </div>
+        </div>
+
+        @if (!state.Revealed && state.VoteDeadlineUtc is { } vDeadline)
+        {
+            var remaining = Math.Max(0, (int)Math.Ceiling((vDeadline - DateTime.UtcNow).TotalSeconds));
+            <div class="alert alert-secondary py-2 px-3 d-flex justify-content-between align-items-center">
+                <span>⏱ Délai du tour</span>
+                <span class="fw-bold">@remaining s</span>
+            </div>
+        }
+
+        @{
+            var revealedResults = state.Revealed ? state.ResultsIfRevealed() : null;
+            string VoteBadgeClass(string? vote)
+            {
+                if (vote is null || revealedResults is null) return "bg-dark";
+                if (revealedResults.Min == revealedResults.Max) return "bg-dark";
+                if (vote == revealedResults.Min) return "bg-danger";
+                if (vote == revealedResults.Max) return "bg-success";
+                return "bg-dark";
+            }
+        }
+
+        <div class="row g-4">
+            <div class="col-md-4">
+                <h6>Membres (@members.Count)</h6>
+                <ul class="list-group">
+                    @foreach (var m in members)
+                    {
+                        var isMe = m.Id == memberId;
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span class="@(m.IsAfk ? "text-muted fst-italic" : "")">
+                                @m.Name
+                                @if (isMe) { <span class="text-muted small">(vous)</span> }
+                            </span>
+                            @if (m.IsAfk)
+                            {
+                                <span class="badge bg-secondary">AFK</span>
+                            }
+                            else if (state.Revealed)
+                            {
+                                <span class="badge @VoteBadgeClass(m.Vote)">@(m.Vote ?? "—")</span>
+                            }
+                            else if (m.HasVoted)
+                            {
+                                <span class="badge bg-success">a voté</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-light text-muted">en attente</span>
+                            }
+                        </li>
+                    }
+                </ul>
+            </div>
+
+            <div class="col-md-8">
+                @if (state.Revealed)
+                {
+                    var results = revealedResults;
+                    @if (results is not null)
+                    {
+                        <div class="card mb-3">
+                            <div class="card-body">
+                                <h5 class="card-title">Résultats</h5>
+                                @if (results.NumericVoteCount > 0)
+                                {
+                                    <div class="row text-center">
+                                        <div class="col">
+                                            <div class="text-muted small">Min</div>
+                                            <div class="display-6">@results.Min</div>
+                                        </div>
+                                        <div class="col">
+                                            <div class="text-muted small">Médiane</div>
+                                            <div class="display-4 text-primary">@results.Median</div>
+                                        </div>
+                                        <div class="col">
+                                            <div class="text-muted small">Max</div>
+                                            <div class="display-6">@results.Max</div>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <p class="text-muted">Aucune valeur numérique votée.</p>
+                                }
+
+                                @if (results.SpecialBreakdown.Count > 0)
+                                {
+                                    <hr />
+                                    <div class="d-flex gap-2 flex-wrap">
+                                        @foreach (var c in results.SpecialBreakdown)
+                                        {
+                                            <span class="badge bg-secondary">@c.Card × @c.Count</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                    <button class="btn btn-primary" @onclick="NewRound">Nouveau tour</button>
+                }
+                else
+                {
+                    @if (state.CountdownDeadlineUtc is { } deadline)
+                    {
+                        var remaining = Math.Max(0, (int)Math.Ceiling((deadline - DateTime.UtcNow).TotalSeconds));
+                        <div class="alert alert-info text-center">
+                            <div class="small">Révélation dans</div>
+                            <div class="display-3">@remaining</div>
+                        </div>
+                    }
+
+                    <h6>Votre vote</h6>
+                    @if (IsMeAfk)
+                    {
+                        <p class="text-muted">Vous êtes AFK — cliquez sur « Je reviens » pour pouvoir voter.</p>
+                    }
+                    else
+                    {
+                        <div class="d-flex flex-wrap gap-2">
+                            @foreach (var card in ScaleProvider.Cards(state.Scale))
+                            {
+                                var selected = card == myVote;
+                                <button class="btn @(selected ? "btn-primary" : "btn-outline-secondary") vote-card"
+                                        @onclick="@(() => SubmitVote(card))">
+                                    @card
+                                </button>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid RoomId { get; set; }
+
+    private Room? room;
+    private bool notFound;
+
+    private RoomState? state;
+    private bool joined;
+    private Guid memberId = Guid.NewGuid();
+    private string memberName = string.Empty;
+
+    private IReadOnlyList<MemberView> members = Array.Empty<MemberView>();
+    private string? myVote;
+    private bool copied;
+
+    private System.Threading.Timer? countdownTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        room = await db.Rooms.FirstOrDefaultAsync(r => r.Id == RoomId);
+        if (room is null)
+        {
+            notFound = true;
+            return;
+        }
+
+        var maxDuration = room.MaxVoteDurationSeconds is { } sec
+            ? TimeSpan.FromSeconds(sec)
+            : (TimeSpan?)null;
+
+        state = Coordinator.GetOrCreate(RoomId, room.Scale, maxDuration);
+        state.Changed += OnStateChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || room is null) return;
+
+        try
+        {
+            var result = await Storage.GetAsync<string>("memberName");
+            if (result.Success && !string.IsNullOrWhiteSpace(result.Value))
+            {
+                memberName = result.Value!;
+            }
+        }
+        catch
+        {
+            // ProtectedLocalStorage indisponible : on ignore.
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task JoinAsync()
+    {
+        if (state is null) return;
+        memberName = memberName.Trim();
+        if (memberName.Length == 0) return;
+
+        try
+        {
+            await Storage.SetAsync("memberName", memberName);
+        }
+        catch { /* ignore */ }
+
+        state.Join(memberId, memberName);
+        Tracker.Track(RoomId, memberId, memberName);
+        joined = true;
+        RefreshLocal();
+    }
+
+    private void SubmitVote(string card)
+    {
+        if (state is null) return;
+        state.Vote(memberId, card);
+        RefreshLocal();
+    }
+
+    private void NewRound()
+    {
+        state?.ResetRound();
+        RefreshLocal();
+    }
+
+    private bool IsMeAfk => members.FirstOrDefault(m => m.Id == memberId)?.IsAfk ?? false;
+
+    private void ToggleAfk()
+    {
+        state?.SetAfk(memberId, !IsMeAfk);
+        RefreshLocal();
+    }
+
+    private async Task CopyShareUrlAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", Navigation.Uri);
+        }
+        catch { /* clipboard indisponible */ }
+
+        copied = true;
+        StateHasChanged();
+        await Task.Delay(1500);
+        copied = false;
+        StateHasChanged();
+    }
+
+    private void OnStateChanged()
+    {
+        InvokeAsync(() =>
+        {
+            RefreshLocal();
+            StateHasChanged();
+        });
+    }
+
+    private void RefreshLocal()
+    {
+        if (state is null) return;
+        members = state.Snapshot();
+        myVote = state.GetMyVote(memberId);
+        UpdateCountdownTimer();
+    }
+
+    private void UpdateCountdownTimer()
+    {
+        bool needsTimer = state is not null
+            && !state.Revealed
+            && (state.CountdownDeadlineUtc is not null || state.VoteDeadlineUtc is not null);
+
+        if (needsTimer && countdownTimer is null)
+        {
+            countdownTimer = new System.Threading.Timer(_ =>
+            {
+                InvokeAsync(StateHasChanged);
+            }, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
+        }
+        else if (!needsTimer && countdownTimer is not null)
+        {
+            countdownTimer.Dispose();
+            countdownTimer = null;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (state is not null)
+        {
+            state.Changed -= OnStateChanged;
+            if (joined)
+            {
+                Tracker.Untrack(RoomId, memberId);
+                state.Leave(memberId);
+            }
+        }
+        if (countdownTimer is not null)
+        {
+            await countdownTimer.DisposeAsync();
+            countdownTimer = null;
+        }
+    }
+}
