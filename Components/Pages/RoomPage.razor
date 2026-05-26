@@ -1,6 +1,7 @@
 @page "/room/{RoomId:guid}"
 @using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
 @using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
 @using StoryPoints.Data
 @using StoryPoints.Services
 @inject IDbContextFactory<AppDbContext> DbFactory
@@ -9,6 +10,7 @@
 @inject ProtectedLocalStorage Storage
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@inject IOptionsMonitor<RoomLimitOptions> RoomLimits
 @implements IAsyncDisposable
 
 <PageTitle>Salon @RoomId.ToString()[..8]</PageTitle>
@@ -39,6 +41,12 @@ else if (!joined)
                 <label class="form-label">Votre nom</label>
                 <InputText class="form-control" @bind-Value="memberName" autofocus />
             </div>
+            @if (roomFull)
+            {
+                <div class="alert alert-warning py-2 mt-2">
+                    Ce salon est complet (@(state?.MaxMembers ?? RoomLimits.CurrentValue.MaxMembersPerRoom) membres maximum).
+                </div>
+            }
             <button type="submit" class="btn btn-primary w-100" disabled="@string.IsNullOrWhiteSpace(memberName)">
                 Rejoindre
             </button>
@@ -211,6 +219,7 @@ else if (state is not null)
     private bool joined;
     private Guid memberId = Guid.NewGuid();
     private string memberName = string.Empty;
+    private bool roomFull;
 
     private IReadOnlyList<MemberView> members = Array.Empty<MemberView>();
     private string? myVote;
@@ -268,7 +277,13 @@ else if (state is not null)
         }
         catch { /* ignore */ }
 
-        state.Join(memberId, memberName);
+        if (!state.Join(memberId, memberName))
+        {
+            roomFull = true;
+            return;
+        }
+
+        roomFull = false;
         Tracker.Track(RoomId, memberId, memberName);
         joined = true;
         RefreshLocal();
