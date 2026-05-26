@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Options;
 using StoryPoints.Data;
 
 namespace StoryPoints.Services;
@@ -8,14 +9,21 @@ public sealed class RoomCoordinator
     private const int CountdownSeconds = 10;
     private const double RevealThreshold = 2.0 / 3.0;
 
+    private readonly IOptionsMonitor<RoomLimitOptions> _options;
     private readonly ConcurrentDictionary<Guid, RoomState> _rooms = new();
     private readonly ConcurrentDictionary<Guid, DateTime> _pendingActivity = new();
+
+    public RoomCoordinator(IOptionsMonitor<RoomLimitOptions> options)
+    {
+        _options = options;
+    }
 
     public RoomState GetOrCreate(Guid roomId, Scale scale, TimeSpan? maxVoteDuration)
     {
         return _rooms.GetOrAdd(roomId, id =>
         {
-            var state = new RoomState(id, scale, maxVoteDuration, CountdownSeconds, RevealThreshold);
+            var state = new RoomState(id, scale, maxVoteDuration, CountdownSeconds, RevealThreshold,
+                _options.CurrentValue.MaxMembersPerRoom);
             state.Changed += () => _pendingActivity[id] = DateTime.UtcNow;
             _pendingActivity[id] = DateTime.UtcNow;
             return state;
@@ -49,13 +57,19 @@ public sealed record MemberView(Guid Id, string Name, bool HasVoted, string? Vot
 
 public sealed class RoomState
 {
+    // Aligned with Blazor's default DisconnectedCircuitRetentionPeriod (3 min): past this
+    // window a dropped circuit is gone and reconnects with a fresh memberId anyway.
+    private const int ReconnectGraceSeconds = 180;
+
     private readonly object _lock = new();
     private readonly Dictionary<Guid, string> _members = new();
     private readonly Dictionary<Guid, string> _votes = new();
     private readonly HashSet<Guid> _afk = new();
+    private readonly Dictionary<Guid, DateTime> _recentlyLeft = new();
     private readonly int _countdownSeconds;
     private readonly double _revealThreshold;
     private readonly TimeSpan? _maxVoteDuration;
+    private readonly int _maxMembers;
 
     private CancellationTokenSource? _countdownCts;
     private CancellationTokenSource? _voteDeadlineCts;
@@ -66,33 +80,45 @@ public sealed class RoomState
     public bool Revealed { get; private set; }
     public DateTime? CountdownDeadlineUtc { get; private set; }
     public DateTime? VoteDeadlineUtc { get; private set; }
+    public int MaxMembers => _maxMembers;
 
     public event Action? Changed;
 
-    public RoomState(Guid id, Scale scale, TimeSpan? maxVoteDuration, int countdownSeconds, double revealThreshold)
+    public RoomState(Guid id, Scale scale, TimeSpan? maxVoteDuration, int countdownSeconds, double revealThreshold, int maxMembers)
     {
         Id = id;
         Scale = scale;
         _maxVoteDuration = maxVoteDuration;
         _countdownSeconds = countdownSeconds;
         _revealThreshold = revealThreshold;
+        _maxMembers = maxMembers;
     }
 
-    public void Join(Guid memberId, string name)
+    public bool Join(Guid memberId, string name)
     {
         lock (_lock)
         {
+            PruneRecentlyLeftLocked();
+            // A returning member (recently dropped, within the grace window) reclaims a slot
+            // even when full — transient reconnects must never lock a legitimate member out.
+            bool isReturning = _recentlyLeft.Remove(memberId);
+            if (!isReturning && !_members.ContainsKey(memberId) && _members.Count >= _maxMembers)
+                return false;
             _members[memberId] = name;
         }
         Evaluate();
         RaiseChanged();
+        return true;
     }
 
     public void Leave(Guid memberId)
     {
         lock (_lock)
         {
-            _members.Remove(memberId);
+            if (_members.Remove(memberId))
+            {
+                _recentlyLeft[memberId] = DateTime.UtcNow;
+            }
             _votes.Remove(memberId);
             _afk.Remove(memberId);
             if (_votes.Count == 0)
@@ -315,6 +341,16 @@ public sealed class RoomState
         _voteDeadlineCts.Dispose();
         _voteDeadlineCts = null;
         VoteDeadlineUtc = null;
+    }
+
+    private void PruneRecentlyLeftLocked()
+    {
+        if (_recentlyLeft.Count == 0) return;
+        var cutoff = DateTime.UtcNow.AddSeconds(-ReconnectGraceSeconds);
+        foreach (var key in _recentlyLeft.Where(kv => kv.Value < cutoff).Select(kv => kv.Key).ToList())
+        {
+            _recentlyLeft.Remove(key);
+        }
     }
 
     private void RaiseChanged() => Changed?.Invoke();
