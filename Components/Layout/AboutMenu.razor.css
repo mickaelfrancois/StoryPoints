@@ -10,8 +10,17 @@
     z-index: 1000;
 }
 
+/* Bootstrap gates the dropdown's top/right/left rules (and dropdown-menu-end)
+   behind the [data-bs-popper] attribute, which is only added by Bootstrap's JS.
+   This menu is toggled manually in Blazor (no Popper), so we position it here:
+   pinned under the button and right-aligned to stay inside the viewport. */
 .about-menu .dropdown-menu.show {
     z-index: 1001;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: auto;
+    margin-top: 0.125rem;
 }
 
 .about-menu .about-icon {
