@@ -87,11 +87,11 @@ else if (state is not null)
             var revealedResults = state.Revealed ? state.ResultsIfRevealed() : null;
             string VoteBadgeClass(string? vote)
             {
-                if (vote is null || revealedResults is null) return "bg-dark";
-                if (revealedResults.Min == revealedResults.Max) return "bg-dark";
+                if (vote is null || revealedResults is null) return "text-bg-secondary";
+                if (revealedResults.Min == revealedResults.Max) return "text-bg-secondary";
                 if (vote == revealedResults.Min) return "bg-danger";
                 if (vote == revealedResults.Max) return "bg-success";
-                return "bg-dark";
+                return "text-bg-secondary";
             }
         }
 
@@ -121,7 +121,7 @@ else if (state is not null)
                             }
                             else
                             {
-                                <span class="badge bg-light text-muted">en attente</span>
+                                <span class="badge border text-body-secondary">en attente</span>
                             }
                         </li>
                     }
