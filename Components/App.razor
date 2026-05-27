@@ -8,6 +8,22 @@
     <link rel="stylesheet" href="@Assets["lib/bootstrap/dist/css/bootstrap.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <link rel="stylesheet" href="@Assets["StoryPoints.styles.css"]" />
+    <script>
+        (function () {
+            const KEY = 'sp-theme';
+            const mq = window.matchMedia('(prefers-color-scheme: dark)');
+            const resolve = p => (p === 'dark' || p === 'light') ? p : (mq.matches ? 'dark' : 'light');
+            const apply = p => document.documentElement.setAttribute('data-bs-theme', resolve(p));
+            window.storyPointsTheme = {
+                get: () => localStorage.getItem(KEY) || 'system',
+                set: p => { localStorage.setItem(KEY, p); apply(p); }
+            };
+            apply(window.storyPointsTheme.get());
+            mq.addEventListener('change', () => {
+                if (window.storyPointsTheme.get() === 'system') apply('system');
+            });
+        })();
+    </script>
     <ImportMap />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <HeadOutlet @rendermode="InteractiveServer" />
