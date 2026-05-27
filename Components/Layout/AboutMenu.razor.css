@@ -1,0 +1,21 @@
+.about-menu {
+    position: relative;
+}
+
+/* Transparent full-screen catcher that closes the menu on an outside click.
+   Sits below the open menu so clicks on menu items still register. */
+.about-menu .about-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+}
+
+.about-menu .dropdown-menu.show {
+    z-index: 1001;
+}
+
+.about-menu .about-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+}
