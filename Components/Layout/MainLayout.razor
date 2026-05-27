@@ -1,11 +1,14 @@
 @inherits LayoutComponentBase
 
-<header class="border-bottom bg-white px-3 py-2 d-flex justify-content-between align-items-center">
-    <a href="/" class="d-inline-flex align-items-center text-decoration-none text-dark">
+<header class="border-bottom bg-body-tertiary px-3 py-2 d-flex justify-content-between align-items-center">
+    <a href="/" class="d-inline-flex align-items-center text-decoration-none text-body">
         <img src="favicon.svg" alt="StoryPoints" width="28" height="28" class="me-2" />
         <strong>StoryPoints</strong>
     </a>
-    <AboutMenu />
+    <div class="d-flex align-items-center gap-2">
+        <ThemeToggle />
+        <AboutMenu />
+    </div>
 </header>
 
 <main class="container-fluid">
