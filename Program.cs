@@ -28,7 +28,7 @@ using (var scope = app.Services.CreateScope())
 {
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
     using var db = factory.CreateDbContext();
-    db.Database.EnsureCreated();
+    DatabaseBootstrapper.MigrateWithLegacyBaseline(db);
 }
 
 if (!app.Environment.IsDevelopment())
