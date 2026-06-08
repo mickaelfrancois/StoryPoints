@@ -68,19 +68,20 @@ public sealed class RoomState
     private readonly Dictionary<Guid, DateTime> _recentlyLeft = new();
     private readonly int _countdownSeconds;
     private readonly double _revealThreshold;
-    private readonly TimeSpan? _maxVoteDuration;
+    private TimeSpan? _maxVoteDuration;
     private readonly int _maxMembers;
 
     private CancellationTokenSource? _countdownCts;
     private CancellationTokenSource? _voteDeadlineCts;
 
     public Guid Id { get; }
-    public Scale Scale { get; }
+    public Scale Scale { get; private set; }
     public int Round { get; private set; } = 1;
     public bool Revealed { get; private set; }
     public DateTime? CountdownDeadlineUtc { get; private set; }
     public DateTime? VoteDeadlineUtc { get; private set; }
     public int MaxMembers => _maxMembers;
+    public TimeSpan? MaxVoteDuration => _maxVoteDuration;
 
     public event Action? Changed;
 
@@ -148,6 +149,56 @@ public sealed class RoomState
                 }
             }
         }
+        Evaluate();
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// Met à jour la configuration vivante du salon. Tout membre peut l'appeler.
+    /// Changer l'échelle invalide les votes du tour (cartes différentes) → le tour
+    /// repart à zéro. Changer uniquement le délai conserve les votes et recale le
+    /// minuteur en cours pour que la nouvelle durée prenne effet immédiatement.
+    /// </summary>
+    public void UpdateSettings(Scale scale, TimeSpan? maxVoteDuration)
+    {
+        CancellationTokenSource? deadlineToStart = null;
+        TimeSpan startDuration = default;
+
+        lock (_lock)
+        {
+            bool scaleChanged = Scale != scale;
+            bool durationChanged = _maxVoteDuration != maxVoteDuration;
+
+            Scale = scale;
+            _maxVoteDuration = maxVoteDuration;
+
+            if (scaleChanged)
+            {
+                _votes.Clear();
+                Revealed = false;
+                CancelCountdownLocked();
+                CancelVoteDeadlineLocked();
+            }
+            else if (durationChanged && !Revealed)
+            {
+                bool wasRunning = _voteDeadlineCts is not null;
+                bool hasVotes = _votes.Count > 0;
+                CancelVoteDeadlineLocked();
+                if (maxVoteDuration is { } d && (wasRunning || hasVotes))
+                {
+                    _voteDeadlineCts = new CancellationTokenSource();
+                    VoteDeadlineUtc = DateTime.UtcNow.Add(d);
+                    deadlineToStart = _voteDeadlineCts;
+                    startDuration = d;
+                }
+            }
+        }
+
+        if (deadlineToStart is not null)
+        {
+            _ = RunVoteDeadlineAsync(startDuration, deadlineToStart.Token);
+        }
+
         Evaluate();
         RaiseChanged();
     }

@@ -73,10 +73,13 @@ else if (state is not null)
                 <h4 class="mb-0">Tour @state.Round</h4>
                 <small class="text-muted">
                     Échelle : @ScaleProvider.Label(state.Scale) · Délai max :
-                    @(room.MaxVoteDurationSeconds is { } s ? $"{s} s" : "illimité")
+                    @(state.MaxVoteDuration is { } d ? $"{(int)d.TotalSeconds} s" : "illimité")
                 </small>
             </div>
             <div class="d-flex gap-2">
+                <button class="btn btn-sm @(showSettings ? "btn-secondary" : "btn-outline-secondary")" @onclick="ToggleSettings">
+                    ⚙ Paramètres
+                </button>
                 <button class="btn btn-sm @(IsMeAfk ? "btn-warning" : "btn-outline-warning")" @onclick="ToggleAfk">
                     @(IsMeAfk ? "Je reviens" : "Je suis AFK")
                 </button>
@@ -85,6 +88,43 @@ else if (state is not null)
                 </button>
             </div>
         </div>
+
+        @if (showSettings)
+        {
+            <div class="card mb-3">
+                <div class="card-body">
+                    <h6 class="card-title">Paramètres du salon</h6>
+                    <div class="mb-3">
+                        <label class="form-label">Échelle de chiffrage</label>
+                        <select class="form-select" @bind="editScale">
+                            @foreach (var sc in Enum.GetValues<Scale>())
+                            {
+                                <option value="@sc">@ScaleProvider.Label(sc) — @string.Join(", ", ScaleProvider.Cards(sc))</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Délai max pour voter (à partir du premier vote)</label>
+                        <select class="form-select" @bind="editMaxVoteSeconds">
+                            @foreach (var option in MaxVoteOptions)
+                            {
+                                <option value="@option.Seconds">@option.Label</option>
+                            }
+                        </select>
+                    </div>
+                    @if (editScale != state.Scale)
+                    {
+                        <div class="alert alert-warning py-2">
+                            Changer l'échelle réinitialise le tour en cours : les votes déjà saisis seront effacés.
+                        </div>
+                    }
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-primary btn-sm" @onclick="SaveSettingsAsync">Enregistrer</button>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="@(() => showSettings = false)">Annuler</button>
+                    </div>
+                </div>
+            </div>
+        }
 
         @* Bandeau chrono à hauteur fixe : toujours présent pendant le tour pour que la
            zone de chiffrage en dessous ne se décale jamais (évite les miss-clicks). *@
@@ -107,11 +147,11 @@ else if (state is not null)
                         <span class="fw-bold">@remaining s</span>
                     </div>
                 }
-                else if (room.MaxVoteDurationSeconds is { } maxSec)
+                else if (state.MaxVoteDuration is { } maxDur)
                 {
                     <div class="alert alert-secondary opacity-75">
                         <span>⏱ Délai du tour</span>
-                        <span class="fw-bold">@maxSec s</span>
+                        <span class="fw-bold">@((int)maxDur.TotalSeconds) s</span>
                     </div>
                 }
                 else
@@ -274,6 +314,21 @@ else if (state is not null)
     private string? myVote;
     private bool copied;
 
+    private bool showSettings;
+    private Scale editScale;
+    private int? editMaxVoteSeconds;
+
+    private record VoteDurationOption(int? Seconds, string Label);
+
+    private static readonly VoteDurationOption[] MaxVoteOptions =
+    {
+        new VoteDurationOption(20, "20 secondes"),
+        new VoteDurationOption(30, "30 secondes"),
+        new VoteDurationOption(40, "40 secondes"),
+        new VoteDurationOption(60, "60 secondes"),
+        new VoteDurationOption(null, "Illimité")
+    };
+
     private System.Threading.Timer? countdownTimer;
 
     protected override async Task OnInitializedAsync()
@@ -380,6 +435,42 @@ else if (state is not null)
     {
         removed = false;
         await JoinAsync();
+    }
+
+    private void ToggleSettings()
+    {
+        if (!showSettings && state is not null)
+        {
+            // Pré-remplit le formulaire avec la config vivante courante.
+            editScale = state.Scale;
+            editMaxVoteSeconds = state.MaxVoteDuration is { } d ? (int)d.TotalSeconds : null;
+        }
+        showSettings = !showSettings;
+    }
+
+    // Tout membre peut reconfigurer le salon. On persiste dans SQLite (durable) puis on
+    // applique à l'état vivant partagé, ce qui notifie tous les membres via Changed.
+    private async Task SaveSettingsAsync()
+    {
+        if (state is null || room is null) return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var stored = await db.Rooms.FirstOrDefaultAsync(r => r.Id == RoomId);
+        if (stored is not null)
+        {
+            stored.Scale = editScale;
+            stored.MaxVoteDurationSeconds = editMaxVoteSeconds;
+            await db.SaveChangesAsync();
+        }
+
+        room.Scale = editScale;
+        room.MaxVoteDurationSeconds = editMaxVoteSeconds;
+
+        var duration = editMaxVoteSeconds is { } s ? TimeSpan.FromSeconds(s) : (TimeSpan?)null;
+        state.UpdateSettings(editScale, duration);
+
+        showSettings = false;
+        RefreshLocal();
     }
 
     private async Task CopyShareUrlAsync()
