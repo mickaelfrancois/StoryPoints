@@ -28,6 +28,18 @@
         }
     </div>
 }
+else if (removed)
+{
+    <div class="container mt-5" style="max-width: 480px;">
+        <div class="alert alert-warning">
+            Vous avez été retiré du salon par un autre participant.
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-primary" @onclick="RejoinAsync">Rejoindre à nouveau</button>
+            <a class="btn btn-outline-secondary" href="/">Retour à l'accueil</a>
+        </div>
+    </div>
+}
 else if (!joined)
 {
     <div class="container mt-5" style="max-width: 480px;">
@@ -107,22 +119,39 @@ else if (state is not null)
                                 @m.Name
                                 @if (isMe) { <span class="text-muted small">(vous)</span> }
                             </span>
-                            @if (m.IsAfk)
-                            {
-                                <span class="badge bg-secondary">AFK</span>
-                            }
-                            else if (state.Revealed)
-                            {
-                                <span class="badge @VoteBadgeClass(m.Vote)">@(m.Vote ?? "—")</span>
-                            }
-                            else if (m.HasVoted)
-                            {
-                                <span class="badge bg-success">a voté</span>
-                            }
-                            else
-                            {
-                                <span class="badge border text-body-secondary">en attente</span>
-                            }
+                            <span class="d-flex align-items-center gap-2">
+                                @if (m.IsAfk)
+                                {
+                                    <span class="badge bg-secondary">AFK</span>
+                                }
+                                else if (state.Revealed)
+                                {
+                                    <span class="badge @VoteBadgeClass(m.Vote)">@(m.Vote ?? "—")</span>
+                                }
+                                else if (m.HasVoted)
+                                {
+                                    <span class="badge bg-success">a voté</span>
+                                }
+                                else
+                                {
+                                    <span class="badge border text-body-secondary">en attente</span>
+                                }
+                                @if (!isMe)
+                                {
+                                    <div class="btn-group btn-group-sm" role="group" aria-label="Actions sur @m.Name">
+                                        <button type="button" class="btn btn-outline-warning py-0 px-1"
+                                                title="@(m.IsAfk ? $"Réactiver {m.Name}" : $"Marquer {m.Name} comme AFK")"
+                                                @onclick="@(() => ToggleMemberAfk(m))">
+                                            @(m.IsAfk ? "▶" : "💤")
+                                        </button>
+                                        <button type="button" class="btn btn-outline-danger py-0 px-1"
+                                                title="Retirer @m.Name du salon"
+                                                @onclick="@(() => RemoveMember(m))">
+                                            ✕
+                                        </button>
+                                    </div>
+                                }
+                            </span>
                         </li>
                     }
                 </ul>
@@ -220,6 +249,7 @@ else if (state is not null)
     private Guid memberId = Guid.NewGuid();
     private string memberName = string.Empty;
     private bool roomFull;
+    private bool removed;
 
     private IReadOnlyList<MemberView> members = Array.Empty<MemberView>();
     private string? myVote;
@@ -310,6 +340,29 @@ else if (state is not null)
         RefreshLocal();
     }
 
+    // Any member can flip another member's AFK state — handy when someone's client
+    // froze mid-round and is blocking the reveal. Reversible: "Réactiver" clears it.
+    private void ToggleMemberAfk(MemberView m)
+    {
+        state?.SetAfk(m.Id, !m.IsAfk);
+        RefreshLocal();
+    }
+
+    // Harder action: drop the member from the live room entirely. Reuses Leave, so the
+    // reveal threshold is re-evaluated immediately. The removed member finds out via
+    // RefreshLocal (they're no longer in the snapshot) and is shown the "removed" view.
+    private void RemoveMember(MemberView m)
+    {
+        state?.Leave(m.Id);
+        RefreshLocal();
+    }
+
+    private async Task RejoinAsync()
+    {
+        removed = false;
+        await JoinAsync();
+    }
+
     private async Task CopyShareUrlAsync()
     {
         try
@@ -340,12 +393,23 @@ else if (state is not null)
         if (state is null) return;
         members = state.Snapshot();
         myVote = state.GetMyVote(memberId);
+
+        // I was joined but I'm no longer in the snapshot → another member removed me.
+        // Untrack first, otherwise a circuit reconnection (OnConnectionUp) would silently
+        // re-add me and undo the removal.
+        if (joined && !removed && members.All(m => m.Id != memberId))
+        {
+            removed = true;
+            Tracker.Untrack(RoomId, memberId);
+        }
+
         UpdateCountdownTimer();
     }
 
     private void UpdateCountdownTimer()
     {
         bool needsTimer = state is not null
+            && !removed
             && !state.Revealed
             && (state.CountdownDeadlineUtc is not null || state.VoteDeadlineUtc is not null);
 
