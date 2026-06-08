@@ -4,3 +4,19 @@
     font-size: 1.4rem;
     font-weight: 600;
 }
+
+/* Hauteur fixe : quel que soit le contenu (attente, délai, compte à rebours),
+   le bandeau occupe la même place pour que les cartes de vote ne bougent jamais. */
+.chrono-band {
+    min-height: 72px;
+    display: flex;
+}
+
+.chrono-band > .alert {
+    flex: 1 1 auto;
+    margin-bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .75rem;
+}

@@ -86,12 +86,40 @@ else if (state is not null)
             </div>
         </div>
 
-        @if (!state.Revealed && state.VoteDeadlineUtc is { } vDeadline)
+        @* Bandeau chrono à hauteur fixe : toujours présent pendant le tour pour que la
+           zone de chiffrage en dessous ne se décale jamais (évite les miss-clicks). *@
+        @if (!state.Revealed)
         {
-            var remaining = Math.Max(0, (int)Math.Ceiling((vDeadline - DateTime.UtcNow).TotalSeconds));
-            <div class="alert alert-secondary py-2 px-3 d-flex justify-content-between align-items-center">
-                <span>⏱ Délai du tour</span>
-                <span class="fw-bold">@remaining s</span>
+            <div class="chrono-band mb-3">
+                @if (state.CountdownDeadlineUtc is { } cDeadline)
+                {
+                    var remaining = Math.Max(0, (int)Math.Ceiling((cDeadline - DateTime.UtcNow).TotalSeconds));
+                    <div class="alert alert-info">
+                        <span>Révélation dans</span>
+                        <span class="fs-3 fw-bold">@remaining</span>
+                    </div>
+                }
+                else if (state.VoteDeadlineUtc is { } vDeadline)
+                {
+                    var remaining = Math.Max(0, (int)Math.Ceiling((vDeadline - DateTime.UtcNow).TotalSeconds));
+                    <div class="alert alert-secondary">
+                        <span>⏱ Délai du tour</span>
+                        <span class="fw-bold">@remaining s</span>
+                    </div>
+                }
+                else if (room.MaxVoteDurationSeconds is { } maxSec)
+                {
+                    <div class="alert alert-secondary opacity-75">
+                        <span>⏱ Délai du tour</span>
+                        <span class="fw-bold">@maxSec s</span>
+                    </div>
+                }
+                else
+                {
+                    <div class="alert alert-light text-body-secondary">
+                        En attente des votes…
+                    </div>
+                }
             </div>
         }
 
@@ -205,15 +233,6 @@ else if (state is not null)
                 }
                 else
                 {
-                    @if (state.CountdownDeadlineUtc is { } deadline)
-                    {
-                        var remaining = Math.Max(0, (int)Math.Ceiling((deadline - DateTime.UtcNow).TotalSeconds));
-                        <div class="alert alert-info text-center">
-                            <div class="small">Révélation dans</div>
-                            <div class="display-3">@remaining</div>
-                        </div>
-                    }
-
                     <h6>Votre vote</h6>
                     @if (IsMeAfk)
                     {
