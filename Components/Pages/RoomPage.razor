@@ -45,8 +45,7 @@ else if (!joined)
     <div class="container mt-5" style="max-width: 480px;">
         <h2>Rejoindre le salon</h2>
         <p class="text-muted small">
-            Échelle : @ScaleProvider.Label(room.Scale) · Délai max :
-            @(room.MaxVoteDurationSeconds is { } s ? $"{s} s" : "illimité")
+            Échelle : @ScaleProvider.Label(room.Scale) · Délai max : @DurationLabel(room.MaxVoteDurationSeconds)
         </p>
         <EditForm Model="this" OnValidSubmit="JoinAsync">
             <div class="mb-3">
@@ -72,8 +71,7 @@ else if (state is not null)
             <div class="text-truncate">
                 <h4 class="mb-0 text-truncate" title="@RoomDisplayName">@RoomDisplayName</h4>
                 <small class="text-muted">
-                    Tour @state.Round · Échelle : @ScaleProvider.Label(state.Scale) · Délai max :
-                    @(state.MaxVoteDuration is { } d ? $"{(int)d.TotalSeconds} s" : "illimité")
+                    Tour @state.Round · Échelle : @ScaleProvider.Label(state.Scale) · Délai max : @DurationLabel(state.MaxVoteDuration)
                 </small>
             </div>
             <div class="d-flex gap-2">
@@ -111,7 +109,7 @@ else if (state is not null)
                     <div class="mb-3">
                         <label class="form-label">Délai max pour voter (à partir du premier vote)</label>
                         <select class="form-select" @bind="editMaxVoteSeconds">
-                            @foreach (var option in MaxVoteOptions)
+                            @foreach (var option in VoteDurationPresets.Options)
                             {
                                 <option value="@option.Seconds">@option.Label</option>
                             }
@@ -138,18 +136,16 @@ else if (state is not null)
             <div class="chrono-band mb-3">
                 @if (state.CountdownDeadlineUtc is { } cDeadline)
                 {
-                    var remaining = Math.Max(0, (int)Math.Ceiling((cDeadline - DateTime.UtcNow).TotalSeconds));
                     <div class="alert alert-info">
                         <span>Révélation dans</span>
-                        <span class="fs-3 fw-bold">@remaining</span>
+                        <span class="fs-3 fw-bold">@RemainingSeconds(cDeadline)</span>
                     </div>
                 }
                 else if (state.VoteDeadlineUtc is { } vDeadline)
                 {
-                    var remaining = Math.Max(0, (int)Math.Ceiling((vDeadline - DateTime.UtcNow).TotalSeconds));
                     <div class="alert alert-secondary">
                         <span>⏱ Délai du tour</span>
-                        <span class="fw-bold">@remaining s</span>
+                        <span class="fw-bold">@RemainingSeconds(vDeadline) s</span>
                     </div>
                 }
                 else if (state.MaxVoteDuration is { } maxDur)
@@ -174,6 +170,7 @@ else if (state is not null)
             {
                 if (vote is null || revealedResults is null) return "text-bg-secondary";
                 if (revealedResults.Min == revealedResults.Max) return "text-bg-secondary";
+                // Vert = chiffrage le plus bas, rouge = le plus haut (intentionnel).
                 if (vote == revealedResults.Min) return "bg-success";
                 if (vote == revealedResults.Max) return "bg-danger";
                 return "text-bg-secondary";
@@ -326,16 +323,12 @@ else if (state is not null)
 
     private string RoomDisplayName => state?.DisplayName ?? RoomId.ToString();
 
-    private record VoteDurationOption(int? Seconds, string Label);
+    private static int RemainingSeconds(DateTime deadlineUtc) =>
+        Math.Max(0, (int)Math.Ceiling((deadlineUtc - DateTime.UtcNow).TotalSeconds));
 
-    private static readonly VoteDurationOption[] MaxVoteOptions =
-    {
-        new VoteDurationOption(20, "20 secondes"),
-        new VoteDurationOption(30, "30 secondes"),
-        new VoteDurationOption(40, "40 secondes"),
-        new VoteDurationOption(60, "60 secondes"),
-        new VoteDurationOption(null, "Illimité")
-    };
+    private static string DurationLabel(int? seconds) => seconds is { } s ? $"{s} s" : "illimité";
+    private static string DurationLabel(TimeSpan? duration) =>
+        DurationLabel(duration is { } d ? (int)d.TotalSeconds : null);
 
     private System.Threading.Timer? countdownTimer;
 
@@ -461,23 +454,19 @@ else if (state is not null)
     // applique à l'état vivant partagé, ce qui notifie tous les membres via Changed.
     private async Task SaveSettingsAsync()
     {
-        if (state is null || room is null) return;
+        if (state is null) return;
 
         var trimmedName = string.IsNullOrWhiteSpace(editName) ? null : editName.Trim();
 
+        // Met à jour uniquement les colonnes de config (sans charger l'entité, donc sans
+        // toucher LastActivityUtc géré par CleanupService).
         await using var db = await DbFactory.CreateDbContextAsync();
-        var stored = await db.Rooms.FirstOrDefaultAsync(r => r.Id == RoomId);
-        if (stored is not null)
-        {
-            stored.Name = trimmedName;
-            stored.Scale = editScale;
-            stored.MaxVoteDurationSeconds = editMaxVoteSeconds;
-            await db.SaveChangesAsync();
-        }
-
-        room.Name = trimmedName;
-        room.Scale = editScale;
-        room.MaxVoteDurationSeconds = editMaxVoteSeconds;
+        await db.Rooms
+            .Where(r => r.Id == RoomId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(r => r.Name, trimmedName)
+                .SetProperty(r => r.Scale, editScale)
+                .SetProperty(r => r.MaxVoteDurationSeconds, editMaxVoteSeconds));
 
         var duration = editMaxVoteSeconds is { } s ? TimeSpan.FromSeconds(s) : (TimeSpan?)null;
         state.UpdateSettings(editScale, duration, trimmedName);

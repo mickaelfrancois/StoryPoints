@@ -39,7 +39,7 @@
             <div class="mb-3">
                 <label class="form-label">Délai max pour voter (à partir du premier vote)</label>
                 <select class="form-select" @bind="selectedMaxVoteSeconds">
-                    @foreach (var option in MaxVoteOptions)
+                    @foreach (var option in VoteDurationPresets.Options)
                     {
                         <option value="@option.Seconds">@option.Label</option>
                     }
@@ -59,17 +59,6 @@
 </div>
 
 @code {
-    private record VoteDurationOption(int? Seconds, string Label);
-
-    private static readonly VoteDurationOption[] MaxVoteOptions = new[]
-    {
-        new VoteDurationOption(20, "20 secondes"),
-        new VoteDurationOption(30, "30 secondes"),
-        new VoteDurationOption(40, "40 secondes"),
-        new VoteDurationOption(60, "60 secondes"),
-        new VoteDurationOption(null, "Illimité")
-    };
-
     private string roomName = string.Empty;
     private Scale selectedScale = Scale.Fibonacci;
     private int? selectedMaxVoteSeconds = 30;
