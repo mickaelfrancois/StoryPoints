@@ -17,7 +17,9 @@ dotnet run --launch-profile https   # https -> https://localhost:7014
 dotnet watch                 # run with hot reload
 ```
 
-There is no test project and no migrations: the SQLite schema is created at startup via `db.Database.EnsureCreated()` (see `Program.cs`). The database file `StoryPoints.db` is created in the content root.
+There is no test project. The SQLite schema is managed with **EF Core Migrations** (`Migrations/`). At startup `Program.cs` calls `DatabaseBootstrapper.MigrateWithLegacyBaseline(db)` (in `Data/`), which runs `db.Database.Migrate()`. To evolve the schema, edit the model then run `dotnet ef migrations add <Name>` (a design-time factory lives in `Data/DesignTimeDbContextFactory.cs`); the new migration is applied automatically on next startup. The database file `StoryPoints.db` is created in the content root.
+
+Legacy-DB note: databases originally created by the old `EnsureCreated()` have no `__EFMigrationsHistory` table. `MigrateWithLegacyBaseline` detects this (tables present, no history), creates the history table and marks the initial migration as already applied (baseline), so existing production databases are adopted without data loss and only newer migrations run.
 
 Docker: the `Dockerfile` targets Linux and exposes 8080/8081; it is wired for the Visual Studio container debug profile.
 
