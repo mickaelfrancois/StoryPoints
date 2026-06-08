@@ -101,8 +101,8 @@ else if (state is not null)
             {
                 if (vote is null || revealedResults is null) return "text-bg-secondary";
                 if (revealedResults.Min == revealedResults.Max) return "text-bg-secondary";
-                if (vote == revealedResults.Min) return "bg-danger";
-                if (vote == revealedResults.Max) return "bg-success";
+                if (vote == revealedResults.Min) return "bg-success";
+                if (vote == revealedResults.Max) return "bg-danger";
                 return "text-bg-secondary";
             }
         }
