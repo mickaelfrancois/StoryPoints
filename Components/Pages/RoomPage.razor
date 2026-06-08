@@ -13,7 +13,7 @@
 @inject IOptionsMonitor<RoomLimitOptions> RoomLimits
 @implements IAsyncDisposable
 
-<PageTitle>Salon @RoomId.ToString()[..8]</PageTitle>
+<PageTitle>@RoomDisplayName</PageTitle>
 
 @if (room is null)
 {
@@ -69,10 +69,10 @@ else if (state is not null)
 {
     <div class="container mt-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <div>
-                <h4 class="mb-0">Tour @state.Round</h4>
+            <div class="text-truncate">
+                <h4 class="mb-0 text-truncate" title="@RoomDisplayName">@RoomDisplayName</h4>
                 <small class="text-muted">
-                    Échelle : @ScaleProvider.Label(state.Scale) · Délai max :
+                    Tour @state.Round · Échelle : @ScaleProvider.Label(state.Scale) · Délai max :
                     @(state.MaxVoteDuration is { } d ? $"{(int)d.TotalSeconds} s" : "illimité")
                 </small>
             </div>
@@ -94,6 +94,11 @@ else if (state is not null)
             <div class="card mb-3">
                 <div class="card-body">
                     <h6 class="card-title">Paramètres du salon</h6>
+                    <div class="mb-3">
+                        <label class="form-label">Nom du salon</label>
+                        <input class="form-control" @bind="editName" maxlength="60" placeholder="@RoomId.ToString()" />
+                        <div class="form-text">Laissez vide pour utiliser l'identifiant du salon par défaut.</div>
+                    </div>
                     <div class="mb-3">
                         <label class="form-label">Échelle de chiffrage</label>
                         <select class="form-select" @bind="editScale">
@@ -317,6 +322,9 @@ else if (state is not null)
     private bool showSettings;
     private Scale editScale;
     private int? editMaxVoteSeconds;
+    private string editName = string.Empty;
+
+    private string RoomDisplayName => state?.DisplayName ?? RoomId.ToString();
 
     private record VoteDurationOption(int? Seconds, string Label);
 
@@ -345,7 +353,7 @@ else if (state is not null)
             ? TimeSpan.FromSeconds(sec)
             : (TimeSpan?)null;
 
-        state = Coordinator.GetOrCreate(RoomId, room.Scale, maxDuration);
+        state = Coordinator.GetOrCreate(RoomId, room.Scale, maxDuration, room.Name);
         state.Changed += OnStateChanged;
     }
 
@@ -442,6 +450,7 @@ else if (state is not null)
         if (!showSettings && state is not null)
         {
             // Pré-remplit le formulaire avec la config vivante courante.
+            editName = state.Name ?? string.Empty;
             editScale = state.Scale;
             editMaxVoteSeconds = state.MaxVoteDuration is { } d ? (int)d.TotalSeconds : null;
         }
@@ -454,20 +463,24 @@ else if (state is not null)
     {
         if (state is null || room is null) return;
 
+        var trimmedName = string.IsNullOrWhiteSpace(editName) ? null : editName.Trim();
+
         await using var db = await DbFactory.CreateDbContextAsync();
         var stored = await db.Rooms.FirstOrDefaultAsync(r => r.Id == RoomId);
         if (stored is not null)
         {
+            stored.Name = trimmedName;
             stored.Scale = editScale;
             stored.MaxVoteDurationSeconds = editMaxVoteSeconds;
             await db.SaveChangesAsync();
         }
 
+        room.Name = trimmedName;
         room.Scale = editScale;
         room.MaxVoteDurationSeconds = editMaxVoteSeconds;
 
         var duration = editMaxVoteSeconds is { } s ? TimeSpan.FromSeconds(s) : (TimeSpan?)null;
-        state.UpdateSettings(editScale, duration);
+        state.UpdateSettings(editScale, duration, trimmedName);
 
         showSettings = false;
         RefreshLocal();

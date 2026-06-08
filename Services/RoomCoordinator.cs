@@ -18,12 +18,12 @@ public sealed class RoomCoordinator
         _options = options;
     }
 
-    public RoomState GetOrCreate(Guid roomId, Scale scale, TimeSpan? maxVoteDuration)
+    public RoomState GetOrCreate(Guid roomId, Scale scale, TimeSpan? maxVoteDuration, string? name)
     {
         return _rooms.GetOrAdd(roomId, id =>
         {
             var state = new RoomState(id, scale, maxVoteDuration, CountdownSeconds, RevealThreshold,
-                _options.CurrentValue.MaxMembersPerRoom);
+                _options.CurrentValue.MaxMembersPerRoom, name);
             state.Changed += () => _pendingActivity[id] = DateTime.UtcNow;
             _pendingActivity[id] = DateTime.UtcNow;
             return state;
@@ -82,10 +82,14 @@ public sealed class RoomState
     public DateTime? VoteDeadlineUtc { get; private set; }
     public int MaxMembers => _maxMembers;
     public TimeSpan? MaxVoteDuration => _maxVoteDuration;
+    public string? Name { get; private set; }
+
+    /// <summary>Nom affichable : le nom choisi, ou l'identifiant du salon par défaut.</summary>
+    public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Id.ToString() : Name!;
 
     public event Action? Changed;
 
-    public RoomState(Guid id, Scale scale, TimeSpan? maxVoteDuration, int countdownSeconds, double revealThreshold, int maxMembers)
+    public RoomState(Guid id, Scale scale, TimeSpan? maxVoteDuration, int countdownSeconds, double revealThreshold, int maxMembers, string? name = null)
     {
         Id = id;
         Scale = scale;
@@ -93,6 +97,7 @@ public sealed class RoomState
         _countdownSeconds = countdownSeconds;
         _revealThreshold = revealThreshold;
         _maxMembers = maxMembers;
+        Name = name;
     }
 
     public bool Join(Guid memberId, string name)
@@ -159,7 +164,7 @@ public sealed class RoomState
     /// repart à zéro. Changer uniquement le délai conserve les votes et recale le
     /// minuteur en cours pour que la nouvelle durée prenne effet immédiatement.
     /// </summary>
-    public void UpdateSettings(Scale scale, TimeSpan? maxVoteDuration)
+    public void UpdateSettings(Scale scale, TimeSpan? maxVoteDuration, string? name)
     {
         CancellationTokenSource? deadlineToStart = null;
         TimeSpan startDuration = default;
@@ -171,6 +176,7 @@ public sealed class RoomState
 
             Scale = scale;
             _maxVoteDuration = maxVoteDuration;
+            Name = name;
 
             if (scaleChanged)
             {

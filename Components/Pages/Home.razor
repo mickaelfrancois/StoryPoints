@@ -21,6 +21,12 @@
             <h5 class="card-title">Nouveau salon</h5>
 
             <div class="mb-3">
+                <label class="form-label">Nom du salon</label>
+                <input class="form-control" @bind="roomName" maxlength="60" placeholder="Ex : Sprint 42 (optionnel)" />
+                <div class="form-text">Laissez vide pour utiliser l'identifiant du salon par défaut.</div>
+            </div>
+
+            <div class="mb-3">
                 <label class="form-label">Échelle de chiffrage</label>
                 <select class="form-select" @bind="selectedScale">
                     @foreach (var scale in Enum.GetValues<Scale>())
@@ -64,6 +70,7 @@
         new VoteDurationOption(null, "Illimité")
     };
 
+    private string roomName = string.Empty;
     private Scale selectedScale = Scale.Fibonacci;
     private int? selectedMaxVoteSeconds = 30;
     private bool creating;
@@ -116,6 +123,7 @@
         var room = new Room
         {
             Id = Guid.NewGuid(),
+            Name = string.IsNullOrWhiteSpace(roomName) ? null : roomName.Trim(),
             Scale = selectedScale,
             MaxVoteDurationSeconds = selectedMaxVoteSeconds,
             CreatedAt = now,
