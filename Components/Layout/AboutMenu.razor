@@ -31,7 +31,7 @@
         Assembly.GetExecutingAssembly()
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
             .InformationalVersion?.Split('+')[0]
-        ?? "1.0.0";
+        ?? "1.1.0";
 
     private void Toggle() => _open = !_open;
 
